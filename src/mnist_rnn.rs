@@ -88,7 +88,6 @@ fn mnist_weights_import_hashmap(
 #[instrument]
 pub fn mnist_rnn(
     run_pt: bool,
-    run_ct: bool,
     config: &Parameters,
     precision: i32,
 ) -> Result<(), Box<dyn Error>> {
@@ -166,11 +165,12 @@ pub fn mnist_rnn(
             // FIRST RNN(128) --------------------------------------------------------------------------------------------------------
             let (qrnn_0, pt_qrnn_0) = spanned!("qrnn_0", {
                 encrypted_rnn_block(
+                    run_pt,
                     &ct.view(),
                     &pt.view(),
                     &weights["QRNN_0/quantized_kernel:0"].view(),
                     &weights["QRNN_0/quantized_recurrent_kernel:0"].view(),
-                    "QRNN_0",
+                    "FIRST RNN(128)",
                     log_p, log_q,
                     &d_keys,&h_keys, config,
                     &mut cuda_engine,&mut amortized_cuda_engine,&mut default_engine,
@@ -184,11 +184,12 @@ pub fn mnist_rnn(
             // SECOND RNN(128) ---------------------------------------------------------------------------------------------------------
             let (qrnn_1, pt_qrnn_1) = spanned!("qrnn_1", {
                 encrypted_rnn_block(
+                    run_pt,
                     &tr,
                     &pt_tr,
                     &weights["QRNN_1/quantized_kernel:0"].view(),
                     &weights["QRNN_1/quantized_recurrent_kernel:0"].view(),
-                    "QRNN_1",
+                    "SECOND RNN(128)",
                     log_p, log_q,
                     &d_keys, &h_keys, config,
                     &mut cuda_engine, &mut amortized_cuda_engine, &mut default_engine,
@@ -203,10 +204,11 @@ pub fn mnist_rnn(
             // FF(1024) -------------------------------------------------------------------------------------------------------
             let (dense_0, pt_dense_0) = spanned!("dense_0", {
                 encrypted_dense_block(
+                    run_pt,
                     &flattened,
                     &pt_flattened,
                     &weights["DENSE_0/quantized_kernel:0"].view(),
-                    "DENSE_0",
+                    "FF(1024)",
                     true,
                     1,
                     log_p, log_q,
@@ -218,10 +220,11 @@ pub fn mnist_rnn(
             // OUT(10) -------------------------------------------------------------------------------------------------------
             let (dense_out, pt_dense_out) = spanned!("dense_out", {
                 encrypted_dense_block(
+                    run_pt,
                     &dense_0.view(),
                     &pt_dense_0.view(),
                     &weights["DENSE_OUT/quantized_kernel:0"].view(),
-                    "DENSE_OUT",
+                    "OUT(10)",
                     false,
                     dense_out_num_accs,
                     log_p, log_q,
