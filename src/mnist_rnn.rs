@@ -83,17 +83,18 @@ fn mnist_weights_import_hashmap(
 }
 
 /**
- * Evaluates the MNIST RNN. Runs the encrypted model and plaintext model concurrently.
+ * Evaluates the MNIST RNN. If run_pt is true, then plaintext run will occur concurrently
+ * with encrypted run, and error metrics will be calculated and displayed as well. If run_pt
+ * is false, only encrypted run will occur and error metrics are not calculated.
  */
 #[instrument]
 pub fn mnist_rnn(
     run_pt: bool,
+    model_type: &str, // 'regular' or 'enlarged'
     config: &Parameters,
-    precision: i32,
 ) -> Result<(), Box<dyn Error>> {
     // Create the necessary engines
-    // Here we need to create a secret to give to the unix seeder, but we skip the actual secret creation
-    const UNSAFE_SECRET: u128 = 1997;
+    const UNSAFE_SECRET: u128 = 1997; // For experimental reproducibility
     let (
         mut default_engine,
         mut serial_engine,
@@ -102,19 +103,22 @@ pub fn mnist_rnn(
         mut amortized_cuda_engine,
     ) = init_engines(UNSAFE_SECRET)?;
 
-    // Create keys
+    // COMMENT BOTH LINES OUT TO LOAD KEYS, UNCOMMENT BOTH LINES TO CREATE AND SAVE KEYS
     let h_keys: Keys = create_keys(config, &mut default_engine, &mut parallel_engine)?;
     save_keys("./keys/keys.bin", "./keys/", &h_keys, &mut serial_engine)?;
+    
+    // COMMENT OUT TO SAVE KEYS, UNCOMMENT TO LOAD KEYS
     // let h_keys: Keys = load_keys("./keys/keys.bin", &mut serial_engine)?;
+    
     let d_keys: CudaKeys = get_cuda_keys(&h_keys, &mut cuda_engine)?;
     println!("{:?}", config);
 
     // Establish precision
-    let log_q: i32 = 64;
-    let log_p: i32 = precision;
+    let log_q: i32 = 64; // Using 64-bit LWE ciphertexts
+    let log_p: i32 = 6;
     let round_off: u64 = 1u64 << (log_q - log_p - 1);
 
-    // Import dataset
+    // Import dataset (MUST BE TERNARIZED INPUTS)
     let mnist_config: MNISTConfig = MNISTConfig {
         mnist_images_file:
             "/data/dev/masters/tf_speaker_rec/mnist_preprocessed/mnist_images_norm_tern.npy",
@@ -124,11 +128,9 @@ pub fn mnist_rnn(
     let mut x = x.into_dimensionality::<Ix3>()?;
     let mut y = y.into_dimensionality::<Ix1>()?;
 
-    // Import weights
+    // Import weights (MUST BE BINARIZED WEIGHTS)
     let weights: HashMap<String, Array2<i8>> = mnist_weights_import_hashmap(
         "/home/vele/Documents/masters/mnist_rnn/runs/202302/20230205-190604/checkpoints/hdf5/weights.hdf5", // 6-bit, 92%
-        // "/home/vele/Documents/masters/mnist_rnn/runs/202303/20230309-102046/checkpoints/hdf5/weights.hdf5", // 6-bit, 92%, L1 out
-        // "/home/vele/Documents/masters/mnist_rnn/runs/202302/20230205-174932/checkpoints/hdf5/weights.hdf5", // any-bit, 95%
         &mut default_engine
     )?;
 
@@ -142,7 +144,7 @@ pub fn mnist_rnn(
     let mut dense_out_dif_percent: Vec<f32> = vec![];
     let mut dense_out_mae: Vec<f32> = vec![];
     let dense_out_num_accs = 4; // SET THE NUMBER OF ACCUMULATION CIPHERTEXTS FOR OUTPUT LAYER
-    let num_test_images = 10000;
+    let num_test_images = 10;
     for (i, img) in x.axis_iter(ndarray::Axis(0)).enumerate() {
         spanned!("encrypted_run", {
             let start = Instant::now();
@@ -163,7 +165,7 @@ pub fn mnist_rnn(
             println!("Beginning encrypted run.");
 
             // FIRST RNN(128) --------------------------------------------------------------------------------------------------------
-            let (qrnn_0, pt_qrnn_0) = spanned!("qrnn_0", {
+            let (qrnn_0, pt_qrnn_0) = spanned!("FIRST RNN(128)", {
                 encrypted_rnn_block(
                     run_pt,
                     &ct.view(),
@@ -176,13 +178,16 @@ pub fn mnist_rnn(
                     &mut cuda_engine,&mut amortized_cuda_engine,&mut default_engine,
                 )?
             });
+            if run_pt {
+                check_pt_ct_difference(&qrnn_0.view(), &pt_qrnn_0.view(), format!("{}: output", "FIRST RNN(128)").as_str(), false, log_p, log_q, &h_keys, &mut default_engine)?;
+            }
 
             // TIME REDUCTION LAYER ------------------------------------------------------------------------------------------------
             let tr = time_reduction(qrnn_0.view())?;
             let pt_tr = time_reduction(pt_qrnn_0.view())?;
 
             // SECOND RNN(128) ---------------------------------------------------------------------------------------------------------
-            let (qrnn_1, pt_qrnn_1) = spanned!("qrnn_1", {
+            let (qrnn_1, pt_qrnn_1) = spanned!("SECOND RNN(128)", {
                 encrypted_rnn_block(
                     run_pt,
                     &tr,
@@ -195,6 +200,9 @@ pub fn mnist_rnn(
                     &mut cuda_engine, &mut amortized_cuda_engine, &mut default_engine,
                 )?
             });
+            if run_pt {
+                check_pt_ct_difference(&qrnn_1.view(), &pt_qrnn_1.view(), format!("{}: output", "SECOND RNN(128)").as_str(), false, log_p, log_q, &h_keys, &mut default_engine)?;
+            }
             // ---------------------------------------------------------------------------------------------------------------------
 
             // FLATTEN -------------------------------------------------------------------------------------------------------------
@@ -202,7 +210,7 @@ pub fn mnist_rnn(
             let pt_flattened = flatten_2D(pt_qrnn_1.view())?;
 
             // FF(1024) -------------------------------------------------------------------------------------------------------
-            let (dense_0, pt_dense_0) = spanned!("dense_0", {
+            let (dense_0, pt_dense_0) = spanned!("FF(1024)", {
                 encrypted_dense_block(
                     run_pt,
                     &flattened,
@@ -216,6 +224,9 @@ pub fn mnist_rnn(
                     &mut cuda_engine, &mut amortized_cuda_engine, &mut default_engine,
                 )?
             });
+            if run_pt {
+                check_pt_ct_difference(&dense_0.view(), &pt_dense_0.view(), format!("{}: output", "FF(1024)").as_str(), false, log_p, log_q, &h_keys, &mut default_engine)?;
+            }
 
             // OUT(10) -------------------------------------------------------------------------------------------------------
             let (dense_out, pt_dense_out) = spanned!("dense_out", {
@@ -233,7 +244,7 @@ pub fn mnist_rnn(
                 )?
             });
 
-            // Decrypt, convert to signed
+            // Decrypt, convert to signed, compute softmax, and get argmax
             let mut ct_logits: Array2<u64> = decrypt_lwe_array(
                 &dense_out.view(),
                 log_p,
@@ -243,48 +254,54 @@ pub fn mnist_rnn(
             )?;
             let mut ct_logits = ct_logits.mapv(|x| iP_to_iT::<i32>(x, log_p));
             let mut ct_logits = ct_logits.sum_axis(Axis(0));
-            let pt_dense_out = pt_dense_out.into_shape(ct_logits.dim())?;
-
-            // Calculate some stats
-            let dense_out_stats = check_pt_pt_difference(&ct_logits.view(), &pt_dense_out.view(), format!("{}: output", "DENSE_OUT").as_str(), false)?;
-            dense_out_dif_percent.push(dense_out_stats.0);
-            dense_out_mae.push(dense_out_stats.1);
-
-            // Get result
             let ct_result = compute_softmax_then_argmax(&ct_logits)?;
             let ct_top_5 = return_top_n(&ct_logits, 5)?;
-            println!("Completed encrypted run.");
+
+            let pt_dense_out = pt_dense_out.into_shape(ct_logits.dim())?;
+            if run_pt {
+                // Calculate stats
+                let dense_out_stats = check_pt_pt_difference(&ct_logits.view(), &pt_dense_out.view(), format!("{}: output", "OUT(10)").as_str(), false)?;
+                dense_out_dif_percent.push(dense_out_stats.0);
+                dense_out_mae.push(dense_out_stats.1);
+            }
+
+            println!("Completed encrypted run.\n");
 
             // -------------------------- END ENCRYPTED FWD STEP ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+            
+            println!("Encrypted MNIST RNN result:      {}", ct_result);
+            println!("Encrypted Top 5 (decreasing):    {}\n", ct_top_5.to_string());
 
-            let pt_result = compute_softmax_then_argmax(&pt_dense_out)?;
-            let pt_top_5 = return_top_n(&pt_dense_out, 5)?;
-            println!("Completed plaintext run.\n");
+            if run_pt {
+                let pt_result = compute_softmax_then_argmax(&pt_dense_out)?;
+                let pt_top_5 = return_top_n(&pt_dense_out, 5)?;
+                println!("Plaintext MNIST RNN result:      {}", pt_result);
+                println!("Plaintext Top 5 (decreasing):    {}\n", pt_top_5.to_string());
+            
+                if pt_result as i8 == y[[i]] {
+                    pt_correct_preds += 1;
+                }
+                if pt_top_5.to_vec().contains(&(y[[i]] as usize)) {
+                    pt_correct_top5_preds += 1;
+                }
+            }
 
-            println!("Encrypted MNIST RNN result: {}", ct_result);
-            println!("Plaintext MNIST RNN result: {}", pt_result);
-            println!("True result:                {}\n", y[[i]]);
-
-            println!("Plaintext Top 5 (decreasing):    {}", pt_top_5.to_string());
-            println!("Ciphertext Top 5 (decreasing):   {}\n", ct_top_5.to_string());
+            println!("True result:                     {}\n", y[[i]]);
 
             // Metric calculations
             if ct_result as i8 == y[[i]] {
                 correct_preds += 1;
             }
-            if pt_result as i8 == y[[i]] {
-                pt_correct_preds += 1;
-            }
             if ct_top_5.to_vec().contains(&(y[[i]] as usize)) {
                 correct_top5_preds += 1;
             }
-            if pt_top_5.to_vec().contains(&(y[[i]] as usize)) {
-                pt_correct_top5_preds += 1;
+            println!("Correct CT predictions (top-1) = {}", correct_preds);
+            println!("Correct CT predictions (top-5) = {}\n", correct_top5_preds);
+            
+            if run_pt {
+                println!("Correct PT predictions (top-1) = {}", pt_correct_preds);
+                println!("Correct PT predictions (top-5) = {}\n", pt_correct_top5_preds);
             }
-            println!("Correct CT predictions = {}", correct_preds);
-            println!("Correct PT predictions = {}\n", pt_correct_preds);
-            println!("CT in top5 count       = {}", correct_top5_preds);
-            println!("PT in top5 count       = {}\n", pt_correct_top5_preds);
 
             let duration = start.elapsed();
             println!("Time elapsed: {:.4} s\n", duration.as_millis() as f32 / 1000f32);
@@ -293,22 +310,23 @@ pub fn mnist_rnn(
 
     // Stat calculations
     let acc = 100_f32 * correct_preds as f32 / num_test_images as f32;
-    let pt_acc = 100_f32 * pt_correct_preds as f32 / num_test_images as f32;
     let top5_acc = 100_f32 * correct_top5_preds as f32 / num_test_images as f32;
-    let pt_top5_acc = 100_f32 * pt_correct_top5_preds as f32 / num_test_images as f32;
     println!("\nCompleted {} predictions!", num_test_images);
     println!("\nAccuracy Statistics...");
-    println!("CT Accuracy = {:.2}%", acc);
-    println!("PT Accuracy = {:.2}%", pt_acc);
-    println!("CT Top-5 Accuracy = {:.2}%", top5_acc);
-    println!("PT Top-5 Accuracy = {:.2}%", pt_top5_acc);
-
-    let dense_out_dif_percent = arr1(&dense_out_dif_percent);
-    let dense_out_mae = arr1(&dense_out_mae);
-    println!("\nDENSE_OUT Statistics...");
-    println!("Number of accumulators                 = {}", dense_out_num_accs);
-    println!("Percent different elements (mean, std) = ({:.2}%, {:.2}%)", dense_out_dif_percent.mean().unwrap(), dense_out_dif_percent.std(0f32));
-    println!("MAE (mean, std)                        = ({:.2}, {:.2})", dense_out_mae.mean().unwrap(), dense_out_mae.std(0f32));
+    println!("Encrypted Top-1 Accuracy = {:.2}%", acc);
+    println!("Encrypted Top-5 Accuracy = {:.2}%", top5_acc);
+    if run_pt { 
+        let pt_acc = 100_f32 * pt_correct_preds as f32 / num_test_images as f32; 
+        let pt_top5_acc = 100_f32 * pt_correct_top5_preds as f32 / num_test_images as f32;
+        let dense_out_dif_percent = arr1(&dense_out_dif_percent);
+        let dense_out_mae = arr1(&dense_out_mae);
+        println!("Plaintext Top-1 Accuracy = {:.2}%", pt_acc);
+        println!("Plaintext Top-5 Accuracy = {:.2}%", pt_top5_acc);
+        println!("\nOUT(10) Statistics:");
+        println!("  Number of output layer accumulator CTs = {}", dense_out_num_accs);
+        println!("  Percent different elements (mean, std) = ({:.2}%, {:.2}%)", dense_out_dif_percent.mean().unwrap(), dense_out_dif_percent.std(0f32));
+        println!("  MAE (mean, std)                        = ({:.2}, {:.2})", dense_out_mae.mean().unwrap(), dense_out_mae.std(0f32));
+    }
 
     Ok(())
 }

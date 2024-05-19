@@ -18,7 +18,7 @@ use mnist_rnn::*;
 fn run_mnist_rnn() -> Result<(), Box<dyn Error>> {
     println!("");
     println!("{}", "Beginning MNIST RNN run.".bold());
-    print_rnn_banner!(mnist_rnn, true, &*SET1, 6);
+    print_rnn_banner!(mnist_rnn, true, "regular", &*SET2);
     Ok(())
 }
 

@@ -118,8 +118,6 @@ pub fn encrypted_rnn_block(
             
             pt_states.row_mut(t).assign(&pt_output); 
         }
-
-        check_pt_ct_difference(&states.view(), &pt_states.view(), format!("{}: output", layer_name).as_str(), false, log_p, log_q, h_keys, default_engine)?;
     }
     
     Ok((states, pt_states))
@@ -167,8 +165,6 @@ pub fn encrypted_dense_block(
                 }
                 pt_states.row_mut(t).assign(&pt_output); 
             }
-
-            check_pt_ct_difference(&states.view(), &pt_states.view(), format!("{}: output", layer_name).as_str(), false, log_p, log_q, h_keys, default_engine)?;
         }
     } else {
         // Very hacky
