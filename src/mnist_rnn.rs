@@ -90,7 +90,7 @@ fn mnist_weights_import_hashmap(
 #[instrument]
 pub fn mnist_rnn(
     run_pt: bool,
-    model_type: &str, // 'regular' or 'enlarged'
+    model_type: bool, // 'true' for regular, 'false' for enlarged
     config: &Parameters,
 ) -> Result<(), Box<dyn Error>> {
     // Create the necessary engines
@@ -118,17 +118,21 @@ pub fn mnist_rnn(
     let log_p: i32 = 6;
     let round_off: u64 = 1u64 << (log_q - log_p - 1);
 
-    // Import dataset (MUST BE TERNARIZED INPUTS)
-    let mnist_config: MNISTConfig = MNISTConfig {
+    // Import dataset (MUST BE TERNARIZED)
+    let mnist_config: MNISTConfig =  if model_type { MNISTConfig {
         mnist_images_file:
-            "/data/dev/masters/tf_speaker_rec/mnist_preprocessed/mnist_images_norm_tern.npy",
-        mnist_labels_file: "/data/dev/masters/tf_speaker_rec/mnist_preprocessed/mnist_labels.npy",
-    };
+            "mnist_preprocessed/mnist_images_norm_tern.npy",
+        mnist_labels_file: "mnist_preprocessed/mnist_labels.npy",
+    }} else { MNISTConfig {
+        mnist_images_file:
+            "mnist_preprocessed/mnist_images_norm_tern_128x128.npy",
+        mnist_labels_file: "mnist_preprocessed/mnist_labels128x128.npy",
+    }};
     let (mut x, mut y): (ndarray::ArrayD<i8>, ndarray::ArrayD<i8>) = import_mnist(&mnist_config)?;
     let mut x = x.into_dimensionality::<Ix3>()?;
     let mut y = y.into_dimensionality::<Ix1>()?;
 
-    // Import weights (MUST BE BINARIZED WEIGHTS)
+    // Import weights (MUST BE BINARIZED)
     let weights: HashMap<String, Array2<i8>> = mnist_weights_import_hashmap(
         "/home/vele/Documents/masters/mnist_rnn/runs/202302/20230205-190604/checkpoints/hdf5/weights.hdf5", // 6-bit, 92%
         &mut default_engine
@@ -144,7 +148,7 @@ pub fn mnist_rnn(
     let mut dense_out_dif_percent: Vec<f32> = vec![];
     let mut dense_out_mae: Vec<f32> = vec![];
     let dense_out_num_accs = 4; // SET THE NUMBER OF ACCUMULATION CIPHERTEXTS FOR OUTPUT LAYER
-    let num_test_images = 10;
+    let num_test_images = 10; // SET THE NUMBER OF TEST IMAGES YOU WANT TO RUN
     for (i, img) in x.axis_iter(ndarray::Axis(0)).enumerate() {
         spanned!("encrypted_run", {
             let start = Instant::now();
@@ -312,16 +316,16 @@ pub fn mnist_rnn(
     let acc = 100_f32 * correct_preds as f32 / num_test_images as f32;
     let top5_acc = 100_f32 * correct_top5_preds as f32 / num_test_images as f32;
     println!("\nCompleted {} predictions!", num_test_images);
-    println!("\nAccuracy Statistics...");
-    println!("Encrypted Top-1 Accuracy = {:.2}%", acc);
-    println!("Encrypted Top-5 Accuracy = {:.2}%", top5_acc);
+    println!("\nAccuracy Statistics:");
+    println!("  Encrypted Top-1 Accuracy = {:.2}%", acc);
+    println!("  Encrypted Top-5 Accuracy = {:.2}%", top5_acc);
     if run_pt { 
         let pt_acc = 100_f32 * pt_correct_preds as f32 / num_test_images as f32; 
         let pt_top5_acc = 100_f32 * pt_correct_top5_preds as f32 / num_test_images as f32;
         let dense_out_dif_percent = arr1(&dense_out_dif_percent);
         let dense_out_mae = arr1(&dense_out_mae);
-        println!("Plaintext Top-1 Accuracy = {:.2}%", pt_acc);
-        println!("Plaintext Top-5 Accuracy = {:.2}%", pt_top5_acc);
+        println!("  Plaintext Top-1 Accuracy = {:.2}%", pt_acc);
+        println!("  Plaintext Top-5 Accuracy = {:.2}%", pt_top5_acc);
         println!("\nOUT(10) Statistics:");
         println!("  Number of output layer accumulator CTs = {}", dense_out_num_accs);
         println!("  Percent different elements (mean, std) = ({:.2}%, {:.2}%)", dense_out_dif_percent.mean().unwrap(), dense_out_dif_percent.std(0f32));
