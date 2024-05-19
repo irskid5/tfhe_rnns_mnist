@@ -2,4 +2,4 @@
 /keys
 Cargo.lock
 benchmarks
-/mnist_preprocessed/*
+mnist_preprocessed/*
