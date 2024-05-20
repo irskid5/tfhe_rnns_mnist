@@ -127,7 +127,7 @@ pub fn mnist_rnn(
     } else {
         MNISTConfig {
             mnist_images_file: "mnist_preprocessed/mnist_images_norm_tern_128x128.npy",
-            mnist_labels_file: "mnist_preprocessed/mnist_labels128x128.npy",
+            mnist_labels_file: "mnist_preprocessed/mnist_labels_128x128.npy",
         }
     };
     let (mut x, mut y): (ndarray::ArrayD<i8>, ndarray::ArrayD<i8>) = import_mnist(&mnist_config)?;
@@ -163,7 +163,7 @@ pub fn mnist_rnn(
     let mut dense_out_dif_percent: Vec<f32> = vec![];
     let mut dense_out_mae: Vec<f32> = vec![];
     let dense_out_num_accs = 4; // SET THE NUMBER OF ACCUMULATION CIPHERTEXTS FOR OUTPUT LAYER
-    let num_test_images = 10; // SET THE NUMBER OF TEST IMAGES YOU WANT TO RUN
+    let num_test_images = 10000; // SET THE NUMBER OF TEST IMAGES YOU WANT TO RUN
     for (i, img) in x.axis_iter(ndarray::Axis(0)).enumerate() {
         spanned!("encrypted_run", {
             let start = Instant::now();
