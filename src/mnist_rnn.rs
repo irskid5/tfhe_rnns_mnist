@@ -18,8 +18,8 @@ use crate::utils::common::*;
 use crate::utils::datasets::*;
 use crate::utils::init::*;
 use crate::utils::keys::*;
-use crate::utils::luts::*;
 use crate::utils::layers::*;
+use crate::utils::luts::*;
 
 #[macro_export]
 macro_rules! print_rnn_banner {
@@ -106,10 +106,10 @@ pub fn mnist_rnn(
     // COMMENT BOTH LINES OUT TO LOAD KEYS, UNCOMMENT BOTH LINES TO CREATE AND SAVE KEYS
     let h_keys: Keys = create_keys(config, &mut default_engine, &mut parallel_engine)?;
     save_keys("./keys/keys.bin", "./keys/", &h_keys, &mut serial_engine)?;
-    
+
     // COMMENT OUT TO SAVE KEYS, UNCOMMENT TO LOAD KEYS
     // let h_keys: Keys = load_keys("./keys/keys.bin", &mut serial_engine)?;
-    
+
     let d_keys: CudaKeys = get_cuda_keys(&h_keys, &mut cuda_engine)?;
     println!("{:?}", config);
 
@@ -119,24 +119,39 @@ pub fn mnist_rnn(
     let round_off: u64 = 1u64 << (log_q - log_p - 1);
 
     // Import dataset (MUST BE TERNARIZED)
-    let mnist_config: MNISTConfig =  if model_type { MNISTConfig {
-        mnist_images_file:
-            "mnist_preprocessed/mnist_images_norm_tern.npy",
-        mnist_labels_file: "mnist_preprocessed/mnist_labels.npy",
-    }} else { MNISTConfig {
-        mnist_images_file:
-            "mnist_preprocessed/mnist_images_norm_tern_128x128.npy",
-        mnist_labels_file: "mnist_preprocessed/mnist_labels128x128.npy",
-    }};
+    let mnist_config: MNISTConfig = if model_type {
+        MNISTConfig {
+            mnist_images_file: "mnist_preprocessed/mnist_images_norm_tern.npy",
+            mnist_labels_file: "mnist_preprocessed/mnist_labels.npy",
+        }
+    } else {
+        MNISTConfig {
+            mnist_images_file: "mnist_preprocessed/mnist_images_norm_tern_128x128.npy",
+            mnist_labels_file: "mnist_preprocessed/mnist_labels128x128.npy",
+        }
+    };
     let (mut x, mut y): (ndarray::ArrayD<i8>, ndarray::ArrayD<i8>) = import_mnist(&mnist_config)?;
     let mut x = x.into_dimensionality::<Ix3>()?;
     let mut y = y.into_dimensionality::<Ix1>()?;
 
     // Import weights (MUST BE BINARIZED)
-    let weights: HashMap<String, Array2<i8>> = mnist_weights_import_hashmap(
-        "/home/vele/Documents/masters/mnist_rnn/runs/202302/20230205-190604/checkpoints/hdf5/weights.hdf5", // 6-bit, 92%
-        &mut default_engine
-    )?;
+    let weights: HashMap<String, Array2<i8>> = if model_type {
+        mnist_weights_import_hashmap(
+            "models/regular/20230205-190604-parameters.hdf5",
+            &mut default_engine,
+        )?
+    } else {
+        mnist_weights_import_hashmap(
+            "models/enlarged/20230402-145048-parameters.hdf5",
+            &mut default_engine,
+        )?
+    };
+
+    if model_type {
+        println!("\nRunning REGULAR MNIST RNN (1,914,368 parameters)")
+    } else {
+        println!("\nRunning ENLARGED MNIST RNN (8,480,768 parameters)")
+    }
 
     println!("\n==================================================\n");
 
@@ -162,7 +177,14 @@ pub fn mnist_rnn(
 
             // Encrypt inputs
             let pt = img.clone().to_owned().mapv(|x| x as i32);
-            let ct = encrypt_lwe_array(&img, log_p, log_q, &h_keys.extracted, &config, &mut default_engine)?;
+            let ct = encrypt_lwe_array(
+                &img,
+                log_p,
+                log_q,
+                &h_keys.extracted,
+                &config,
+                &mut default_engine,
+            )?;
 
             // -------------------------- START FWD STEP ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -177,13 +199,27 @@ pub fn mnist_rnn(
                     &weights["QRNN_0/quantized_kernel:0"].view(),
                     &weights["QRNN_0/quantized_recurrent_kernel:0"].view(),
                     "FIRST RNN(128)",
-                    log_p, log_q,
-                    &d_keys,&h_keys, config,
-                    &mut cuda_engine,&mut amortized_cuda_engine,&mut default_engine,
+                    log_p,
+                    log_q,
+                    &d_keys,
+                    &h_keys,
+                    config,
+                    &mut cuda_engine,
+                    &mut amortized_cuda_engine,
+                    &mut default_engine,
                 )?
             });
             if run_pt {
-                check_pt_ct_difference(&qrnn_0.view(), &pt_qrnn_0.view(), format!("{}: output", "FIRST RNN(128)").as_str(), false, log_p, log_q, &h_keys, &mut default_engine)?;
+                check_pt_ct_difference(
+                    &qrnn_0.view(),
+                    &pt_qrnn_0.view(),
+                    format!("{}: output", "FIRST RNN(128)").as_str(),
+                    false,
+                    log_p,
+                    log_q,
+                    &h_keys,
+                    &mut default_engine,
+                )?;
             }
 
             // TIME REDUCTION LAYER ------------------------------------------------------------------------------------------------
@@ -199,13 +235,27 @@ pub fn mnist_rnn(
                     &weights["QRNN_1/quantized_kernel:0"].view(),
                     &weights["QRNN_1/quantized_recurrent_kernel:0"].view(),
                     "SECOND RNN(128)",
-                    log_p, log_q,
-                    &d_keys, &h_keys, config,
-                    &mut cuda_engine, &mut amortized_cuda_engine, &mut default_engine,
+                    log_p,
+                    log_q,
+                    &d_keys,
+                    &h_keys,
+                    config,
+                    &mut cuda_engine,
+                    &mut amortized_cuda_engine,
+                    &mut default_engine,
                 )?
             });
             if run_pt {
-                check_pt_ct_difference(&qrnn_1.view(), &pt_qrnn_1.view(), format!("{}: output", "SECOND RNN(128)").as_str(), false, log_p, log_q, &h_keys, &mut default_engine)?;
+                check_pt_ct_difference(
+                    &qrnn_1.view(),
+                    &pt_qrnn_1.view(),
+                    format!("{}: output", "SECOND RNN(128)").as_str(),
+                    false,
+                    log_p,
+                    log_q,
+                    &h_keys,
+                    &mut default_engine,
+                )?;
             }
             // ---------------------------------------------------------------------------------------------------------------------
 
@@ -223,13 +273,27 @@ pub fn mnist_rnn(
                     "FF(1024)",
                     true,
                     1,
-                    log_p, log_q,
-                    &d_keys, &h_keys, config,
-                    &mut cuda_engine, &mut amortized_cuda_engine, &mut default_engine,
+                    log_p,
+                    log_q,
+                    &d_keys,
+                    &h_keys,
+                    config,
+                    &mut cuda_engine,
+                    &mut amortized_cuda_engine,
+                    &mut default_engine,
                 )?
             });
             if run_pt {
-                check_pt_ct_difference(&dense_0.view(), &pt_dense_0.view(), format!("{}: output", "FF(1024)").as_str(), false, log_p, log_q, &h_keys, &mut default_engine)?;
+                check_pt_ct_difference(
+                    &dense_0.view(),
+                    &pt_dense_0.view(),
+                    format!("{}: output", "FF(1024)").as_str(),
+                    false,
+                    log_p,
+                    log_q,
+                    &h_keys,
+                    &mut default_engine,
+                )?;
             }
 
             // OUT(10) -------------------------------------------------------------------------------------------------------
@@ -242,9 +306,14 @@ pub fn mnist_rnn(
                     "OUT(10)",
                     false,
                     dense_out_num_accs,
-                    log_p, log_q,
-                    &d_keys, &h_keys, config,
-                    &mut cuda_engine, &mut amortized_cuda_engine, &mut default_engine,
+                    log_p,
+                    log_q,
+                    &d_keys,
+                    &h_keys,
+                    config,
+                    &mut cuda_engine,
+                    &mut amortized_cuda_engine,
+                    &mut default_engine,
                 )?
             });
 
@@ -264,7 +333,12 @@ pub fn mnist_rnn(
             let pt_dense_out = pt_dense_out.into_shape(ct_logits.dim())?;
             if run_pt {
                 // Calculate stats
-                let dense_out_stats = check_pt_pt_difference(&ct_logits.view(), &pt_dense_out.view(), format!("{}: output", "OUT(10)").as_str(), false)?;
+                let dense_out_stats = check_pt_pt_difference(
+                    &ct_logits.view(),
+                    &pt_dense_out.view(),
+                    format!("{}: output", "OUT(10)").as_str(),
+                    false,
+                )?;
                 dense_out_dif_percent.push(dense_out_stats.0);
                 dense_out_mae.push(dense_out_stats.1);
             }
@@ -272,16 +346,22 @@ pub fn mnist_rnn(
             println!("Completed encrypted run.\n");
 
             // -------------------------- END ENCRYPTED FWD STEP ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-            
+
             println!("Encrypted MNIST RNN result:      {}", ct_result);
-            println!("Encrypted Top 5 (decreasing):    {}\n", ct_top_5.to_string());
+            println!(
+                "Encrypted Top 5 (decreasing):    {}\n",
+                ct_top_5.to_string()
+            );
 
             if run_pt {
                 let pt_result = compute_softmax_then_argmax(&pt_dense_out)?;
                 let pt_top_5 = return_top_n(&pt_dense_out, 5)?;
                 println!("Plaintext MNIST RNN result:      {}", pt_result);
-                println!("Plaintext Top 5 (decreasing):    {}\n", pt_top_5.to_string());
-            
+                println!(
+                    "Plaintext Top 5 (decreasing):    {}\n",
+                    pt_top_5.to_string()
+                );
+
                 if pt_result as i8 == y[[i]] {
                     pt_correct_preds += 1;
                 }
@@ -301,14 +381,20 @@ pub fn mnist_rnn(
             }
             println!("Correct CT predictions (top-1) = {}", correct_preds);
             println!("Correct CT predictions (top-5) = {}\n", correct_top5_preds);
-            
+
             if run_pt {
                 println!("Correct PT predictions (top-1) = {}", pt_correct_preds);
-                println!("Correct PT predictions (top-5) = {}\n", pt_correct_top5_preds);
+                println!(
+                    "Correct PT predictions (top-5) = {}\n",
+                    pt_correct_top5_preds
+                );
             }
 
             let duration = start.elapsed();
-            println!("Time elapsed: {:.4} s\n", duration.as_millis() as f32 / 1000f32);
+            println!(
+                "Time elapsed: {:.4} s\n",
+                duration.as_millis() as f32 / 1000f32
+            );
         });
     }
 
@@ -319,17 +405,28 @@ pub fn mnist_rnn(
     println!("\nAccuracy Statistics:");
     println!("  Encrypted Top-1 Accuracy = {:.2}%", acc);
     println!("  Encrypted Top-5 Accuracy = {:.2}%", top5_acc);
-    if run_pt { 
-        let pt_acc = 100_f32 * pt_correct_preds as f32 / num_test_images as f32; 
+    if run_pt {
+        let pt_acc = 100_f32 * pt_correct_preds as f32 / num_test_images as f32;
         let pt_top5_acc = 100_f32 * pt_correct_top5_preds as f32 / num_test_images as f32;
         let dense_out_dif_percent = arr1(&dense_out_dif_percent);
         let dense_out_mae = arr1(&dense_out_mae);
         println!("  Plaintext Top-1 Accuracy = {:.2}%", pt_acc);
         println!("  Plaintext Top-5 Accuracy = {:.2}%", pt_top5_acc);
         println!("\nOUT(10) Statistics:");
-        println!("  Number of output layer accumulator CTs = {}", dense_out_num_accs);
-        println!("  Percent different elements (mean, std) = ({:.2}%, {:.2}%)", dense_out_dif_percent.mean().unwrap(), dense_out_dif_percent.std(0f32));
-        println!("  MAE (mean, std)                        = ({:.2}, {:.2})", dense_out_mae.mean().unwrap(), dense_out_mae.std(0f32));
+        println!(
+            "  Number of output layer accumulator CTs = {}",
+            dense_out_num_accs
+        );
+        println!(
+            "  Percent different elements (mean, std) = ({:.2}%, {:.2}%)",
+            dense_out_dif_percent.mean().unwrap(),
+            dense_out_dif_percent.std(0f32)
+        );
+        println!(
+            "  MAE (mean, std)                        = ({:.2}, {:.2})",
+            dense_out_mae.mean().unwrap(),
+            dense_out_mae.std(0f32)
+        );
     }
 
     Ok(())

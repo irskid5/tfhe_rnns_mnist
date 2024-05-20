@@ -25,7 +25,7 @@ fn run_mnist_rnn() -> Result<(), Box<dyn Error>> {
 fn main() {
     // Do we enable timing collection?
     time_graph::enable_data_collection(true);
-    
+
     match run_mnist_rnn() {
         Ok(()) => println!("{}\n", "MNIST RNN run completed.".bold()),
         Err(e) => {
