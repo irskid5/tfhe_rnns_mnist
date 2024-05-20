@@ -136,15 +136,9 @@ pub fn mnist_rnn(
 
     // Import weights (MUST BE BINARIZED)
     let weights: HashMap<String, Array2<i8>> = if model_type {
-        mnist_weights_import_hashmap(
-            "models/regular/20230205-190604-parameters.hdf5",
-            &mut default_engine,
-        )?
+        mnist_weights_import_hashmap("models/regular/parameters.hdf5", &mut default_engine)?
     } else {
-        mnist_weights_import_hashmap(
-            "models/enlarged/20230402-145048-parameters.hdf5",
-            &mut default_engine,
-        )?
+        mnist_weights_import_hashmap("models/enlarged/parameters.hdf5", &mut default_engine)?
     };
 
     if model_type {
