@@ -5,9 +5,8 @@ Evaluation of the MNIST RNN, both regular and enlarged, over the encrypted MNIST
 ## Pre-installation Steps
 
 1) sudo apt-get install libhdf5-serial-dev
-2) Make sure you have cmake, build-essential, and NVIDIA Cuda Toolkit > 11.6 installed
+2) Install cmake v3.22.1, build-essential, cargo v1.68.0, rustc v1.68.0, NVIDIA Cuda Toolkit nvcc v12.1.105
 3) Make sure you have >=1 GPU installed in your system
-4) Run "cargo build --release".
 
 ## Evaluation Instructions
 
